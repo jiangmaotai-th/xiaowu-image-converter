@@ -1,4 +1,4 @@
-export type SourceFormat = 'TIFF' | 'PSD';
+export type SourceFormat = 'TIFF' | 'PSD' | 'JPG';
 
 export type ConvertStatus = 'queued' | 'processing' | 'done' | 'error';
 

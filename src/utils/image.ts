@@ -5,6 +5,7 @@ export function getSourceFormat(file: File): SourceFormat | null {
 
   if (lower.endsWith('.tif') || lower.endsWith('.tiff')) return 'TIFF';
   if (lower.endsWith('.psd')) return 'PSD';
+  if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'JPG';
   return null;
 }
 

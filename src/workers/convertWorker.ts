@@ -34,10 +34,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
 async function convertFile(file: File, options: ConvertOptions) {
   const lowerName = file.name.toLowerCase();
   const buffer = await file.arrayBuffer();
-  const image =
-    lowerName.endsWith('.psd')
-      ? decodePsd(buffer)
-      : decodeTiff(buffer);
+  const image = await decodeImage(buffer, lowerName);
 
   const warningParts: string[] = [];
   if (image.width > 12000 || image.height > 12000) {
@@ -63,6 +60,18 @@ async function convertFile(file: File, options: ConvertOptions) {
     qualityUsed,
     warning: warningParts.join('；') || undefined,
   };
+}
+
+async function decodeImage(buffer: ArrayBuffer, lowerName: string): Promise<DecodedImage> {
+  if (lowerName.endsWith('.psd')) {
+    return decodePsd(buffer);
+  }
+
+  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
+    return decodeBrowserImage(buffer, 'image/jpeg');
+  }
+
+  return decodeTiff(buffer);
 }
 
 interface DecodedImage {
@@ -95,6 +104,25 @@ function decodeTiff(buffer: ArrayBuffer): DecodedImage {
     imageData: new ImageData(new Uint8ClampedArray(rgba), width, height),
     warning: pages.length > 1 ? '多页 TIFF 已转换第一页' : undefined,
   };
+}
+
+async function decodeBrowserImage(buffer: ArrayBuffer, type: string): Promise<DecodedImage> {
+  const bitmap = await createImageBitmap(new Blob([buffer], { type }));
+  const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
+  const canvasCtx = canvas.getContext('2d');
+
+  if (!canvasCtx) {
+    bitmap.close();
+    throw new Error('当前浏览器不支持 JPG 解码');
+  }
+
+  canvasCtx.drawImage(bitmap, 0, 0);
+  const imageData = canvasCtx.getImageData(0, 0, bitmap.width, bitmap.height);
+  const width = bitmap.width;
+  const height = bitmap.height;
+  bitmap.close();
+
+  return { width, height, imageData };
 }
 
 function decodePsd(buffer: ArrayBuffer): DecodedImage {
