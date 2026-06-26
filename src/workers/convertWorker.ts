@@ -144,7 +144,6 @@ async function decodeBrowserImage(buffer: ArrayBuffer, type: string): Promise<De
 
 function decodePsd(buffer: ArrayBuffer): DecodedImage {
   const psd = readPsd(buffer, {
-    useImageData: true,
     skipLayerImageData: true,
     skipThumbnail: true,
   }) as {
@@ -158,20 +157,21 @@ function decodePsd(buffer: ArrayBuffer): DecodedImage {
     throw new Error('无法识别 PSD 图片尺寸');
   }
 
+  if (psd.canvas) {
+    return {
+      width: psd.width,
+      height: psd.height,
+      canvas: psd.canvas,
+    };
+  }
+
   if (psd.imageData) {
     return {
       width: psd.width,
       height: psd.height,
       imageData: normalizeImageData(psd.imageData, psd.width, psd.height),
+      warning: 'PSD 使用原始像素模式导出，部分特殊色彩模式可能有偏差',
     };
-  }
-
-  if (psd.canvas) {
-    const canvasCtx = psd.canvas.getContext('2d');
-    const imageData = canvasCtx?.getImageData(0, 0, psd.width, psd.height);
-    if (imageData) {
-      return { width: psd.width, height: psd.height, imageData };
-    }
   }
 
   throw new Error('PSD 没有可导出的合成图层');
