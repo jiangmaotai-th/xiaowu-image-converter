@@ -4,7 +4,7 @@ export type ConvertStatus = 'queued' | 'processing' | 'done' | 'error';
 
 export interface ImageJob {
   id: string;
-  file: File;
+  file?: File;
   name: string;
   originalSize: number;
   format: SourceFormat;
@@ -15,6 +15,7 @@ export interface ImageJob {
   outputSize?: number;
   outputName?: string;
   outputBlob?: Blob;
+  downloaded?: boolean;
   qualityUsed?: number;
   warning?: string;
   error?: string;

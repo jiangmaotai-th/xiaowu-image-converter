@@ -4,7 +4,7 @@ import ProgressBar from './ProgressBar';
 
 interface FileListProps {
   jobs: ImageJob[];
-  onDownload: (job: ImageJob) => void;
+  totalCount: number;
 }
 
 const statusText: Record<ImageJob['status'], string> = {
@@ -14,13 +14,19 @@ const statusText: Record<ImageJob['status'], string> = {
   error: '失败',
 };
 
-export default function FileList({ jobs, onDownload }: FileListProps) {
-  if (jobs.length === 0) {
+export default function FileList({ jobs, totalCount }: FileListProps) {
+  if (totalCount === 0) {
     return <div className="empty-list">还没有文件。把 TIFF 或 PSD 拖进来，就可以开始转换。</div>;
   }
 
+  const hiddenCount = Math.max(0, totalCount - jobs.length);
+
   return (
     <section className="file-panel">
+      <div className="file-summary">
+        共 {totalCount} 个文件
+        {hiddenCount > 0 ? `，为保持流畅仅显示最近 ${jobs.length} 个` : ''}
+      </div>
       <div className="file-table">
         <div className="file-row file-head">
           <span>文件名</span>
@@ -29,7 +35,7 @@ export default function FileList({ jobs, onDownload }: FileListProps) {
           <span>尺寸</span>
           <span>状态</span>
           <span>转换后</span>
-          <span>下载</span>
+          <span>保存</span>
         </div>
         {jobs.map((job) => (
           <div className="file-row" key={job.id}>
@@ -47,16 +53,7 @@ export default function FileList({ jobs, onDownload }: FileListProps) {
               {formatBytes(job.outputSize)}
               {job.qualityUsed && <small>质量 {job.qualityUsed.toFixed(2)}</small>}
             </span>
-            <span>
-              <button
-                type="button"
-                className="small-button"
-                disabled={!job.outputBlob}
-                onClick={() => onDownload(job)}
-              >
-                下载
-              </button>
-            </span>
+            <span>{job.downloaded ? '已下载' : '-'}</span>
           </div>
         ))}
       </div>

@@ -3,33 +3,35 @@ import { useMemo, useRef, useState } from 'react';
 import DropZone from './components/DropZone';
 import FileList from './components/FileList';
 import Toolbar from './components/Toolbar';
-import type { ConvertOptions, ImageJob, WorkerResponse } from './types';
+import type { ConvertOptions, ImageJob, WorkerFailure, WorkerResponse } from './types';
 import { downloadBlob } from './utils/download';
 import { getSourceFormat, makeId } from './utils/image';
 import { runWithConcurrency } from './utils/queue';
 
 const CONCURRENCY = 2;
 const MIN_AUTO_QUALITY = 0.65;
+const VISIBLE_ROWS = 500;
 
 export default function App() {
-  const [jobs, setJobs] = useState<ImageJob[]>([]);
+  const [jobIds, setJobIds] = useState<string[]>([]);
+  const [jobsById, setJobsById] = useState<Record<string, ImageJob>>({});
   const [quality, setQuality] = useState(0.92);
   const [targetSizeMb, setTargetSizeMb] = useState(10);
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState<string[]>([]);
   const workersRef = useRef<Worker[]>([]);
 
-  const canConvert = useMemo(
-    () => jobs.length > 0,
-    [jobs],
-  );
-  const convertLabel = useMemo(
-    () => (jobs.some((job) => job.status === 'done') ? '重新转换' : '转换'),
-    [jobs],
-  );
+  const jobs = useMemo(() => jobIds.map((id) => jobsById[id]).filter(Boolean), [jobIds, jobsById]);
+  const visibleJobs = useMemo(() => jobs.slice(-VISIBLE_ROWS), [jobs]);
+  const canConvert = useMemo(() => jobs.some((job) => job.file && (job.status === 'queued' || job.status === 'error')), [jobs]);
+  const convertLabel = busy ? '转换中' : '转换';
 
   const updateJob = (id: string, patch: Partial<ImageJob>) => {
-    setJobs((current) => current.map((job) => (job.id === id ? { ...job, ...patch } : job)));
+    setJobsById((current) => {
+      const job = current[id];
+      if (!job) return current;
+      return { ...current, [id]: { ...job, ...patch } };
+    });
   };
 
   const addFiles = (files: File[]) => {
@@ -55,13 +57,36 @@ export default function App() {
     }
 
     if (accepted.length > 0) {
-      setJobs((current) => [...current, ...accepted]);
+      setJobIds((current) => [...current, ...accepted.map((job) => job.id)]);
+      setJobsById((current) => {
+        const next = { ...current };
+        for (const job of accepted) {
+          next[job.id] = job;
+        }
+        return next;
+      });
     }
-    setMessages(rejected);
+    setMessages([
+      ...rejected,
+      ...(accepted.length > 100
+        ? [`已加入 ${accepted.length} 个文件。建议一次转换 20-100 张；更大批量也会排队逐个处理，避免一次性解码进内存。`]
+        : []),
+    ]);
   };
 
   const convertOne = (job: ImageJob, options: ConvertOptions) =>
     new Promise<WorkerResponse>((resolve) => {
+      if (!job.file) {
+        const data: WorkerFailure = {
+          type: 'error',
+          id: job.id,
+          error: '文件已释放，请重新上传后再转换',
+        };
+        updateJob(job.id, { status: 'error', progress: 0, error: data.error });
+        resolve(data);
+        return;
+      }
+
       updateJob(job.id, {
         status: 'processing',
         progress: 18,
@@ -70,6 +95,7 @@ export default function App() {
         outputBlob: undefined,
         outputSize: undefined,
         outputName: undefined,
+        downloaded: false,
       });
 
       const worker = new Worker(new URL('./workers/convertWorker.ts', import.meta.url), {
@@ -130,13 +156,12 @@ export default function App() {
     });
 
   const convertAll = async () => {
-    const pending = jobs.filter((job) => job.status === 'queued' || job.status === 'error');
-    const targets = pending.length > 0 ? pending : jobs;
+    const targets = jobs.filter((job) => job.file && (job.status === 'queued' || job.status === 'error'));
     if (targets.length === 0) return;
 
     setBusy(true);
     setMessages([]);
-    const downloads: Array<{ blob: Blob; name: string }> = [];
+    let downloadCount = 0;
 
     const options: ConvertOptions = {
       quality,
@@ -148,17 +173,19 @@ export default function App() {
     await runWithConcurrency(targets, CONCURRENCY, async (job) => {
       const result = await convertOne(job, options);
       if (result.type === 'success') {
-        downloads.push({ blob: result.blob, name: result.outputName });
+        downloadBlob(result.blob, result.outputName);
+        downloadCount += 1;
+        updateJob(result.id, {
+          file: undefined,
+          outputBlob: undefined,
+          downloaded: true,
+        });
       }
     });
 
-    for (const item of downloads) {
-      downloadBlob(item.blob, item.name);
-    }
-
     setMessages(
-      downloads.length > 0
-        ? [`转换完成，已直接下载 ${downloads.length} 个 JPEG 文件。`]
+      downloadCount > 0
+        ? [`转换完成，已直接下载 ${downloadCount} 个 JPEG 文件。为避免越用越卡，已释放转换完成文件的内存。`]
         : ['没有成功转换的文件，请查看列表中的错误提示。'],
     );
     setBusy(false);
@@ -169,7 +196,8 @@ export default function App() {
       worker.terminate();
     }
     workersRef.current = [];
-    setJobs([]);
+    setJobIds([]);
+    setJobsById({});
     setMessages([]);
     setBusy(false);
   };
@@ -181,14 +209,8 @@ export default function App() {
           <p className="eyebrow">本地批量 TIFF / PSD 转 JPEG</p>
           <h1>小午的图片转换</h1>
         </div>
-        <div className="privacy-pill">不上传服务器</div>
+        <div className="privacy-pill">开发者：猫汰&nbsp;&nbsp;版本 v1.0</div>
       </header>
-
-      <section className="notice-grid">
-        <p>JPEG 是有损压缩格式，不是真正无损。</p>
-        <p>所有转换都在本地浏览器完成，不上传服务器。</p>
-        <p>PSD 会按当前可见合成效果导出为 JPEG。</p>
-      </section>
 
       <DropZone disabled={busy} onFiles={addFiles} />
 
@@ -212,7 +234,7 @@ export default function App() {
         </section>
       )}
 
-      <FileList jobs={jobs} onDownload={(job) => job.outputBlob && downloadBlob(job.outputBlob, job.outputName ?? 'image.jpeg')} />
+      <FileList jobs={visibleJobs} totalCount={jobIds.length} />
     </main>
   );
 }
