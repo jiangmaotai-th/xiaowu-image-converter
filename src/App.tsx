@@ -15,7 +15,7 @@ const VISIBLE_ROWS = 500;
 export default function App() {
   const [jobIds, setJobIds] = useState<string[]>([]);
   const [jobsById, setJobsById] = useState<Record<string, ImageJob>>({});
-  const [quality, setQuality] = useState(0.92);
+  const [quality, setQuality] = useState(1);
   const [targetSizeMb, setTargetSizeMb] = useState(10);
   const [busy, setBusy] = useState(false);
   const [messages, setMessages] = useState<string[]>([]);
@@ -185,7 +185,7 @@ export default function App() {
 
     setMessages(
       downloadCount > 0
-        ? [`转换完成，已直接下载 ${downloadCount} 个 JPEG 文件。为避免越用越卡，已释放转换完成文件的内存。`]
+        ? [`转换完成，已直接下载 ${downloadCount} 个 JPEG 文件。`]
         : ['没有成功转换的文件，请查看列表中的错误提示。'],
     );
     setBusy(false);
