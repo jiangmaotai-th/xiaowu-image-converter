@@ -1,4 +1,4 @@
-export type SourceFormat = 'TIFF' | 'PSD' | 'JPG';
+export type SourceFormat = 'TIFF' | 'PSD' | 'JPG' | 'HEIC';
 
 export type ConvertStatus = 'queued' | 'processing' | 'done' | 'error';
 
@@ -38,6 +38,7 @@ export interface ConvertOptions {
 export interface WorkerRequest {
   id: string;
   file: File;
+  format: SourceFormat;
   options: ConvertOptions;
   mode: 'preview' | 'convert';
 }

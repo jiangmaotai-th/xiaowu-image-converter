@@ -13,10 +13,10 @@ initializeCanvas(
 );
 
 ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
-  const { id, file, options, mode } = event.data;
+  const { id, file, format, options, mode } = event.data;
 
   try {
-    const result = await convertFile(file, options);
+    const result = await convertFile(file, format, options);
     ctx.postMessage({
       type: 'success',
       id,
@@ -31,10 +31,9 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   }
 };
 
-async function convertFile(file: File, options: ConvertOptions) {
-  const lowerName = file.name.toLowerCase();
+async function convertFile(file: File, format: WorkerRequest['format'], options: ConvertOptions) {
   const buffer = await file.arrayBuffer();
-  const image = await decodeImage(buffer, lowerName);
+  const image = await decodeImage(buffer, format);
 
   const warningParts: string[] = [];
   if (image.width > 12000 || image.height > 12000) {
@@ -62,13 +61,17 @@ async function convertFile(file: File, options: ConvertOptions) {
   };
 }
 
-async function decodeImage(buffer: ArrayBuffer, lowerName: string): Promise<DecodedImage> {
-  if (lowerName.endsWith('.psd')) {
+async function decodeImage(buffer: ArrayBuffer, format: WorkerRequest['format']): Promise<DecodedImage> {
+  if (format === 'PSD') {
     return decodePsd(buffer);
   }
 
-  if (lowerName.endsWith('.jpg') || lowerName.endsWith('.jpeg')) {
+  if (format === 'JPG') {
     return decodeBrowserImage(buffer, 'image/jpeg');
+  }
+
+  if (format === 'HEIC') {
+    return decodeBrowserImage(buffer, 'image/heic');
   }
 
   return decodeTiff(buffer);
@@ -107,7 +110,13 @@ function decodeTiff(buffer: ArrayBuffer): DecodedImage {
 }
 
 async function decodeBrowserImage(buffer: ArrayBuffer, type: string): Promise<DecodedImage> {
-  const bitmap = await createImageBitmap(new Blob([buffer], { type }));
+  let bitmap: ImageBitmap;
+
+  try {
+    bitmap = await createImageBitmap(new Blob([buffer], { type }));
+  } catch {
+    throw new Error(type === 'image/heic' ? '当前浏览器不支持 HEIC 解码，请先在 Mac/iPhone 导出为 JPG 后再转换' : '当前浏览器不支持 JPG 解码');
+  }
   const canvas = new OffscreenCanvas(bitmap.width, bitmap.height);
   const canvasCtx = canvas.getContext('2d');
 

@@ -5,7 +5,7 @@ import FileList from './components/FileList';
 import Toolbar from './components/Toolbar';
 import type { ConvertOptions, ImageJob, WorkerFailure, WorkerResponse } from './types';
 import { downloadBlob } from './utils/download';
-import { getSourceFormat, makeId } from './utils/image';
+import { detectSourceFormat, makeId } from './utils/image';
 import { runWithConcurrency } from './utils/queue';
 
 const CONCURRENCY = 2;
@@ -106,14 +106,14 @@ export default function App() {
     });
   };
 
-  const addFiles = (files: File[]) => {
+  const addFiles = async (files: File[]) => {
     const accepted: ImageJob[] = [];
     const rejected: string[] = [];
 
     for (const file of files) {
-      const format = getSourceFormat(file);
+      const format = await detectSourceFormat(file);
       if (!format) {
-        rejected.push(`${file.name} 不是支持的 TIFF / PSD / JPG 文件`);
+        rejected.push(`${file.name} 不是支持的 TIFF / PSD / JPG / HEIC 文件`);
         continue;
       }
 
@@ -256,6 +256,7 @@ export default function App() {
       worker.postMessage({
         id: job.id,
         file: job.file,
+        format: job.format,
         options,
         mode,
       });
@@ -415,7 +416,7 @@ export default function App() {
     <main className="app-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">本地批量 TIFF / PSD / JPG 转 JPEG</p>
+          <p className="eyebrow">本地批量 TIFF / PSD / JPG / HEIC 转 JPEG</p>
           <h1>小午的图片转换</h1>
         </div>
         <div className="privacy-pill">开发者：猫汰&nbsp;&nbsp;版本 v1.0</div>

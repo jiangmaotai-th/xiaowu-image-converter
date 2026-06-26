@@ -47,7 +47,7 @@ export default function DropZone({ disabled, onFiles }: DropZoneProps) {
       <input
         ref={inputRef}
         type="file"
-        accept=".tif,.tiff,.psd,.jpg,.jpeg"
+        accept=".tif,.tiff,.psd,.jpg,.jpeg,.heic,.heif"
         multiple
         disabled={disabled}
         onClick={(event) => {
@@ -56,7 +56,7 @@ export default function DropZone({ disabled, onFiles }: DropZoneProps) {
         onChange={(event) => acceptFiles(event.target.files)}
       />
       <div>
-        <h2>拖拽 TIFF、PSD 和 JPG 到这里</h2>
+        <h2>拖拽 TIFF、PSD、JPG 和 HEIC 到这里</h2>
         <p>一次至少支持 20 张，默认导出 JPEG</p>
       </div>
       <button type="button" disabled={disabled} onClick={openFilePicker}>
