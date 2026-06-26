@@ -11,7 +11,19 @@ export default function DropZone({ disabled, onFiles }: DropZoneProps) {
 
   const acceptFiles = (fileList: FileList | null) => {
     if (!fileList || disabled) return;
-    onFiles(Array.from(fileList));
+    const files = Array.from(fileList);
+    if (files.length === 0) return;
+
+    onFiles(files);
+    if (inputRef.current) {
+      inputRef.current.value = '';
+    }
+  };
+
+  const openFilePicker = () => {
+    if (!inputRef.current || disabled) return;
+    inputRef.current.value = '';
+    inputRef.current.click();
   };
 
   return (
@@ -38,13 +50,16 @@ export default function DropZone({ disabled, onFiles }: DropZoneProps) {
         accept=".tif,.tiff,.psd"
         multiple
         disabled={disabled}
+        onClick={(event) => {
+          event.currentTarget.value = '';
+        }}
         onChange={(event) => acceptFiles(event.target.files)}
       />
       <div>
         <h2>拖拽 TIFF 和 PSD 到这里</h2>
         <p>一次至少支持 20 张，默认导出 JPEG</p>
       </div>
-      <button type="button" disabled={disabled} onClick={() => inputRef.current?.click()}>
+      <button type="button" disabled={disabled} onClick={openFilePicker}>
         选择图片
       </button>
     </section>

@@ -139,9 +139,10 @@ export default function App() {
       });
     }
     setMessages([
+      ...(accepted.length > 0 ? [`已加入 ${accepted.length} 个文件。`] : []),
       ...rejected,
       ...(accepted.length > 100
-        ? [`已加入 ${accepted.length} 个文件。建议一次转换 20-100 张；更大批量也会排队逐个处理，避免一次性解码进内存。`]
+        ? ['建议一次转换 20-100 张；更大批量也会排队逐个处理，避免一次性解码进内存。']
         : []),
     ]);
   };
