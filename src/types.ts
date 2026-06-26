@@ -20,6 +20,8 @@ export interface ImageJob {
   previewQuality?: number;
   previewBlob?: Blob;
   previewKey?: string;
+  previewTargetKey?: string;
+  previewRequestedQuality?: number;
   previewPending?: boolean;
   qualityUsed?: number;
   warning?: string;

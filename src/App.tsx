@@ -41,6 +41,62 @@ export default function App() {
   const getOptionsKey = (options: ConvertOptions) =>
     `${options.quality}|${options.targetSizeMb}|${options.minAutoQuality}|${options.backgroundColor}`;
 
+  const getPreviewTargetKey = (options: ConvertOptions) =>
+    `${options.targetSizeMb}|${options.minAutoQuality}|${options.backgroundColor}`;
+
+  const updatePreviewResult = (data: Extract<WorkerResponse, { type: 'success' }>, options: ConvertOptions) => {
+    const optionKey = getOptionsKey(options);
+    const targetKey = getPreviewTargetKey(options);
+
+    setJobsById((current) => {
+      const job = current[data.id];
+      if (!job) return current;
+
+      const canReuseSmallerHigherQuality =
+        job.previewTargetKey === targetKey &&
+        job.previewRequestedQuality != null &&
+        options.quality <= job.previewRequestedQuality &&
+        job.previewSize != null &&
+        job.previewBlob &&
+        data.outputSize > job.previewSize;
+
+      if (canReuseSmallerHigherQuality) {
+        return {
+          ...current,
+          [data.id]: {
+            ...job,
+            status: 'queued',
+            progress: 100,
+            width: data.width,
+            height: data.height,
+            previewPending: false,
+            warning: data.warning,
+          },
+        };
+      }
+
+      return {
+        ...current,
+        [data.id]: {
+          ...job,
+          status: 'queued',
+          progress: 100,
+          width: data.width,
+          height: data.height,
+          outputName: data.outputName,
+          previewSize: data.outputSize,
+          previewQuality: data.qualityUsed,
+          previewBlob: data.blob,
+          previewKey: optionKey,
+          previewTargetKey: targetKey,
+          previewRequestedQuality: options.quality,
+          previewPending: false,
+          warning: data.warning,
+        },
+      };
+    });
+  };
+
   const addFiles = (files: File[]) => {
     const accepted: ImageJob[] = [];
     const rejected: string[] = [];
@@ -121,7 +177,7 @@ export default function App() {
         outputName: undefined,
         downloaded: false,
         ...(mode === 'preview'
-          ? { previewSize: undefined, previewQuality: undefined, previewBlob: undefined, previewKey: undefined, previewPending: true }
+          ? { previewPending: true }
           : {}),
       });
 
@@ -145,19 +201,7 @@ export default function App() {
 
         if (data.type === 'success') {
           if (mode === 'preview') {
-            updateJob(data.id, {
-              status: 'queued',
-              progress: 100,
-              width: data.width,
-              height: data.height,
-              outputName: data.outputName,
-              previewSize: data.outputSize,
-              previewQuality: data.qualityUsed,
-              previewBlob: data.blob,
-              previewKey: getOptionsKey(options),
-              previewPending: false,
-              warning: data.warning,
-            });
+            updatePreviewResult(data, options);
           } else {
             updateJob(data.id, {
               status: 'done',
@@ -222,17 +266,27 @@ export default function App() {
     stopPreviewWorkers();
     const options = makeOptions();
     const optionKey = getOptionsKey(options);
+    const targetKey = getPreviewTargetKey(options);
     setJobsById((current) => {
       const next = { ...current };
       for (const id of jobIds) {
         const job = next[id];
         if (!job?.file) continue;
+        const canKeepCurrentPreview =
+          job.previewTargetKey === targetKey &&
+          job.previewRequestedQuality != null &&
+          quality <= job.previewRequestedQuality &&
+          job.previewSize != null &&
+          job.previewBlob;
+
         next[id] = {
           ...job,
-          previewSize: undefined,
-          previewQuality: undefined,
-          previewBlob: undefined,
-          previewKey: optionKey,
+          previewSize: canKeepCurrentPreview ? job.previewSize : undefined,
+          previewQuality: canKeepCurrentPreview ? job.previewQuality : undefined,
+          previewBlob: canKeepCurrentPreview ? job.previewBlob : undefined,
+          previewKey: canKeepCurrentPreview ? job.previewKey : optionKey,
+          previewTargetKey: canKeepCurrentPreview ? job.previewTargetKey : targetKey,
+          previewRequestedQuality: canKeepCurrentPreview ? job.previewRequestedQuality : quality,
           previewPending: true,
           warning: undefined,
           error: undefined,
@@ -272,9 +326,18 @@ export default function App() {
 
     const options = makeOptions();
     const optionKey = getOptionsKey(options);
+    const targetKey = getPreviewTargetKey(options);
 
     await runWithConcurrency(targets, CONCURRENCY, async (job) => {
-      if (job.previewBlob && job.previewKey === optionKey && job.outputName) {
+      const canUsePreview =
+        job.previewBlob &&
+        job.outputName &&
+        (job.previewKey === optionKey ||
+          (job.previewTargetKey === targetKey &&
+            job.previewRequestedQuality != null &&
+            options.quality <= job.previewRequestedQuality));
+
+      if (canUsePreview && job.previewBlob && job.outputName) {
         downloadBlob(job.previewBlob, job.outputName);
         downloadCount += 1;
         updateJob(job.id, {
