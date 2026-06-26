@@ -20,7 +20,7 @@ ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
     ctx.postMessage({
       type: 'success',
       id,
-      ...(mode === 'convert' ? result : { ...result, blob: undefined }),
+      ...result,
     } satisfies WorkerResponse);
   } catch (error) {
     ctx.postMessage({
@@ -151,9 +151,35 @@ async function encodeJpegUnderTarget(image: DecodedImage, options: ConvertOption
   let quality = clampQuality(options.quality);
   let blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
 
-  while (blob.size > targetBytes && quality > options.minAutoQuality) {
-    quality = Math.max(options.minAutoQuality, Number((quality - 0.05).toFixed(2)));
-    blob = await canvas.convertToBlob({ type: 'image/jpeg', quality });
+  if (blob.size > targetBytes && quality > options.minAutoQuality) {
+    const minQuality = Math.max(0.4, options.minAutoQuality);
+    const minBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: minQuality });
+
+    if (minBlob.size <= targetBytes) {
+      let low = minQuality;
+      let high = quality;
+      let bestBlob = minBlob;
+      let bestQuality = minQuality;
+
+      for (let attempt = 0; attempt < 6; attempt += 1) {
+        const nextQuality = Number(((low + high) / 2).toFixed(3));
+        const nextBlob = await canvas.convertToBlob({ type: 'image/jpeg', quality: nextQuality });
+
+        if (nextBlob.size <= targetBytes) {
+          low = nextQuality;
+          bestBlob = nextBlob;
+          bestQuality = nextQuality;
+        } else {
+          high = nextQuality;
+        }
+      }
+
+      blob = bestBlob;
+      quality = bestQuality;
+    } else {
+      blob = minBlob;
+      quality = minQuality;
+    }
   }
 
   return {

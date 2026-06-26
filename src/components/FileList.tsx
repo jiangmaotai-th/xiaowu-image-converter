@@ -51,7 +51,7 @@ export default function FileList({ jobs, totalCount }: FileListProps) {
               {job.error && <small className="error">{job.error}</small>}
             </span>
             <span>
-              {formatBytes(job.previewSize)}
+              {job.previewPending ? '计算中' : formatBytes(job.previewSize)}
               {job.previewQuality && <small>质量 {job.previewQuality.toFixed(2)}</small>}
             </span>
             <span>

@@ -38,6 +38,9 @@ export default function App() {
     });
   };
 
+  const getOptionsKey = (options: ConvertOptions) =>
+    `${options.quality}|${options.targetSizeMb}|${options.minAutoQuality}|${options.backgroundColor}`;
+
   const addFiles = (files: File[]) => {
     const accepted: ImageJob[] = [];
     const rejected: string[] = [];
@@ -117,7 +120,9 @@ export default function App() {
         outputSize: undefined,
         outputName: undefined,
         downloaded: false,
-        ...(mode === 'preview' ? { previewSize: undefined, previewQuality: undefined } : {}),
+        ...(mode === 'preview'
+          ? { previewSize: undefined, previewQuality: undefined, previewBlob: undefined, previewKey: undefined, previewPending: true }
+          : {}),
       });
 
       const worker = new Worker(new URL('./workers/convertWorker.ts', import.meta.url), {
@@ -145,8 +150,12 @@ export default function App() {
               progress: 100,
               width: data.width,
               height: data.height,
+              outputName: data.outputName,
               previewSize: data.outputSize,
               previewQuality: data.qualityUsed,
+              previewBlob: data.blob,
+              previewKey: getOptionsKey(options),
+              previewPending: false,
               warning: data.warning,
             });
           } else {
@@ -166,6 +175,7 @@ export default function App() {
           updateJob(data.id, {
             status: 'error',
             progress: 0,
+            previewPending: false,
             error: data.error,
           });
         }
@@ -182,6 +192,7 @@ export default function App() {
         updateJob(job.id, {
           status: 'error',
           progress: 0,
+          previewPending: false,
           error: data.error,
         });
         cleanup();
@@ -209,12 +220,31 @@ export default function App() {
     const runId = previewRunRef.current + 1;
     previewRunRef.current = runId;
     stopPreviewWorkers();
+    const options = makeOptions();
+    const optionKey = getOptionsKey(options);
+    setJobsById((current) => {
+      const next = { ...current };
+      for (const id of jobIds) {
+        const job = next[id];
+        if (!job?.file) continue;
+        next[id] = {
+          ...job,
+          previewSize: undefined,
+          previewQuality: undefined,
+          previewBlob: undefined,
+          previewKey: optionKey,
+          previewPending: true,
+          warning: undefined,
+          error: undefined,
+        };
+      }
+      return next;
+    });
 
     previewTimerRef.current = window.setTimeout(async () => {
       const targets = jobIds
         .map((id) => jobsById[id])
         .filter((job): job is ImageJob => Boolean(job?.file));
-      const options = makeOptions();
 
       await runWithConcurrency(targets, CONCURRENCY, async (job) => {
         if (runId !== previewRunRef.current) return;
@@ -241,8 +271,26 @@ export default function App() {
     let downloadCount = 0;
 
     const options = makeOptions();
+    const optionKey = getOptionsKey(options);
 
     await runWithConcurrency(targets, CONCURRENCY, async (job) => {
+      if (job.previewBlob && job.previewKey === optionKey && job.outputName) {
+        downloadBlob(job.previewBlob, job.outputName);
+        downloadCount += 1;
+        updateJob(job.id, {
+          status: 'done',
+          progress: 100,
+          file: undefined,
+          outputBlob: undefined,
+          outputName: job.outputName,
+          outputSize: job.previewSize,
+          qualityUsed: job.previewQuality,
+          previewBlob: undefined,
+          downloaded: true,
+        });
+        return;
+      }
+
       const result = await runOne(job, options, 'convert');
       if (result.type === 'success' && result.blob) {
         downloadBlob(result.blob, result.outputName);
