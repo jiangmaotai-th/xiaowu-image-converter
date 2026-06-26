@@ -113,7 +113,7 @@ export default function App() {
     for (const file of files) {
       const format = await detectSourceFormat(file);
       if (!format) {
-        rejected.push(`${file.name} 不是支持的 TIFF / PSD / JPG / HEIC 文件`);
+        rejected.push(`${file.name} 不是支持的 TIFF / JPG / HEIC 文件`);
         continue;
       }
 
@@ -416,7 +416,7 @@ export default function App() {
     <main className="app-shell">
       <header className="hero">
         <div>
-          <p className="eyebrow">本地批量 TIFF / PSD / JPG / HEIC 转 JPEG</p>
+          <p className="eyebrow">本地批量 TIFF / JPG / HEIC 转 JPEG</p>
           <h1>小午的图片转换</h1>
         </div>
         <div className="privacy-pill">开发者：猫汰&nbsp;&nbsp;版本 v1.0</div>

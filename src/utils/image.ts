@@ -4,7 +4,6 @@ export function getSourceFormat(file: File): SourceFormat | null {
   const lower = file.name.toLowerCase();
 
   if (lower.endsWith('.tif') || lower.endsWith('.tiff')) return 'TIFF';
-  if (lower.endsWith('.psd')) return 'PSD';
   if (lower.endsWith('.jpg') || lower.endsWith('.jpeg')) return 'JPG';
   if (lower.endsWith('.heic') || lower.endsWith('.heif')) return 'HEIC';
   return null;
@@ -17,7 +16,6 @@ export async function detectSourceFormat(file: File): Promise<SourceFormat | nul
     .join('');
 
   if (header[0] === 0xff && header[1] === 0xd8) return 'JPG';
-  if (ascii.startsWith('8BPS')) return 'PSD';
   if (
     (header[0] === 0x49 && header[1] === 0x49 && header[2] === 0x2a && header[3] === 0x00) ||
     (header[0] === 0x4d && header[1] === 0x4d && header[2] === 0x00 && header[3] === 0x2a)

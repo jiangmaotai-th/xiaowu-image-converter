@@ -1,16 +1,9 @@
-import { initializeCanvas, readPsd } from 'ag-psd';
 import * as UTIF from 'utif';
 
 import type { ConvertOptions, WorkerRequest, WorkerResponse } from '../types';
 import { toJpegName } from '../utils/image';
 
 const ctx: DedicatedWorkerGlobalScope = self as unknown as DedicatedWorkerGlobalScope;
-
-initializeCanvas(
-  ((width: number, height: number) => new OffscreenCanvas(width, height)) as never,
-  undefined,
-  (width: number, height: number) => new ImageData(width, height),
-);
 
 ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const { id, file, format, options, mode } = event.data;
@@ -43,8 +36,18 @@ async function convertFile(file: File, format: WorkerRequest['format'], options:
     warningParts.push(image.warning);
   }
 
-  const { blob, qualityUsed, sizeWarning } = await encodeJpegUnderTarget(image, options);
-  image.dispose?.();
+  let blob: Blob;
+  let qualityUsed: number;
+  let sizeWarning: string | undefined;
+
+  try {
+    const encoded = await encodeJpegUnderTarget(image, options);
+    blob = encoded.blob;
+    qualityUsed = encoded.qualityUsed;
+    sizeWarning = encoded.sizeWarning;
+  } finally {
+    image.dispose?.();
+  }
 
   if (sizeWarning) {
     warningParts.push(sizeWarning);
@@ -62,10 +65,6 @@ async function convertFile(file: File, format: WorkerRequest['format'], options:
 }
 
 async function decodeImage(buffer: ArrayBuffer, format: WorkerRequest['format']): Promise<DecodedImage> {
-  if (format === 'PSD') {
-    return decodePsd(buffer);
-  }
-
   if (format === 'JPG') {
     return decodeBrowserImage(buffer, 'image/jpeg');
   }
@@ -142,41 +141,6 @@ async function decodeBrowserImage(buffer: ArrayBuffer, type: string): Promise<De
   return { width, height, canvas };
 }
 
-function decodePsd(buffer: ArrayBuffer): DecodedImage {
-  const psd = readPsd(buffer, {
-    skipLayerImageData: true,
-    skipThumbnail: true,
-  }) as {
-    width: number;
-    height: number;
-    imageData?: ImageData;
-    canvas?: OffscreenCanvas;
-  };
-
-  if (!psd.width || !psd.height) {
-    throw new Error('无法识别 PSD 图片尺寸');
-  }
-
-  if (psd.canvas) {
-    return {
-      width: psd.width,
-      height: psd.height,
-      canvas: psd.canvas,
-    };
-  }
-
-  if (psd.imageData) {
-    return {
-      width: psd.width,
-      height: psd.height,
-      imageData: normalizeImageData(psd.imageData, psd.width, psd.height),
-      warning: 'PSD 使用原始像素模式导出，部分特殊色彩模式可能有偏差',
-    };
-  }
-
-  throw new Error('PSD 没有可导出的合成图层');
-}
-
 async function encodeJpegUnderTarget(image: DecodedImage, options: ConvertOptions) {
   const targetBytes = options.targetSizeMb * 1024 * 1024;
   const canvas = new OffscreenCanvas(image.width, image.height);
@@ -245,24 +209,4 @@ async function encodeJpegUnderTarget(image: DecodedImage, options: ConvertOption
 
 function clampQuality(value: number): number {
   return Math.min(1, Math.max(0.4, value));
-}
-
-function normalizeImageData(source: ImageData, width: number, height: number): ImageData {
-  if (source.data instanceof Uint8ClampedArray) {
-    return source;
-  }
-
-  const data = source.data as unknown as Uint16Array | Float32Array;
-  const normalized = new Uint8ClampedArray(width * height * 4);
-  const isFloat = data instanceof Float32Array;
-
-  for (let index = 0; index < normalized.length; index += 1) {
-    normalized[index] = isFloat ? clampByte(data[index] * 255) : clampByte((data[index] / 65535) * 255);
-  }
-
-  return new ImageData(normalized, width, height);
-}
-
-function clampByte(value: number): number {
-  return Math.max(0, Math.min(255, Math.round(value)));
 }

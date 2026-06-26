@@ -16,7 +16,7 @@ const statusText: Record<ImageJob['status'], string> = {
 
 export default function FileList({ jobs, totalCount }: FileListProps) {
   if (totalCount === 0) {
-    return <div className="empty-list">还没有文件。把 TIFF、PSD、JPG 或 HEIC 拖进来，就可以开始转换。</div>;
+    return <div className="empty-list">还没有文件。把 TIFF、JPG 或 HEIC 拖进来，就可以开始转换。</div>;
   }
 
   const hiddenCount = Math.max(0, totalCount - jobs.length);
