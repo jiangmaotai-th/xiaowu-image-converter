@@ -11,6 +11,15 @@ import { runWithConcurrency } from './utils/queue';
 const CONCURRENCY = 2;
 const MIN_AUTO_QUALITY = 0.4;
 const VISIBLE_ROWS = 500;
+const DOWNLOAD_DELAY_MS = 650;
+
+interface DownloadItem {
+  id: string;
+  blob: Blob;
+  outputName: string;
+  outputSize: number;
+  qualityUsed?: number;
+}
 
 export default function App() {
   const [jobIds, setJobIds] = useState<string[]>([]);
@@ -258,6 +267,8 @@ export default function App() {
     backgroundColor: '#ffffff',
   });
 
+  const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+
   useEffect(() => {
     if (busy || !previewFileKey) return undefined;
 
@@ -322,7 +333,7 @@ export default function App() {
     stopPreviewWorkers();
     setBusy(true);
     setMessages([]);
-    let downloadCount = 0;
+    const downloads: DownloadItem[] = [];
 
     const options = makeOptions();
     const optionKey = getOptionsKey(options);
@@ -338,37 +349,50 @@ export default function App() {
             options.quality <= job.previewRequestedQuality));
 
       if (canUsePreview && job.previewBlob && job.outputName) {
-        downloadBlob(job.previewBlob, job.outputName);
-        downloadCount += 1;
-        updateJob(job.id, {
-          status: 'done',
-          progress: 100,
-          file: undefined,
-          outputBlob: undefined,
+        downloads.push({
+          id: job.id,
+          blob: job.previewBlob,
           outputName: job.outputName,
-          outputSize: job.previewSize,
+          outputSize: job.previewBlob.size,
           qualityUsed: job.previewQuality,
-          previewBlob: undefined,
-          downloaded: true,
         });
         return;
       }
 
       const result = await runOne(job, options, 'convert');
       if (result.type === 'success' && result.blob) {
-        downloadBlob(result.blob, result.outputName);
-        downloadCount += 1;
-        updateJob(result.id, {
-          file: undefined,
-          outputBlob: undefined,
-          downloaded: true,
+        downloads.push({
+          id: result.id,
+          blob: result.blob,
+          outputName: result.outputName,
+          outputSize: result.blob.size,
+          qualityUsed: result.qualityUsed,
         });
       }
     });
 
+    for (const item of downloads) {
+      downloadBlob(item.blob, item.outputName);
+      updateJob(item.id, {
+        status: 'done',
+        progress: 100,
+        file: undefined,
+        outputBlob: undefined,
+        outputName: item.outputName,
+        outputSize: item.outputSize,
+        qualityUsed: item.qualityUsed,
+        previewBlob: undefined,
+        downloaded: true,
+      });
+
+      if (downloads.length > 1) {
+        await wait(DOWNLOAD_DELAY_MS);
+      }
+    }
+
     setMessages(
-      downloadCount > 0
-        ? [`转换完成，已直接下载 ${downloadCount} 个 JPEG 文件。`]
+      downloads.length > 0
+        ? [`转换完成，已直接下载 ${downloads.length} 个 JPEG 文件。`]
         : ['没有成功转换的文件，请查看列表中的错误提示。'],
     );
     setBusy(false);
