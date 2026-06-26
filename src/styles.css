@@ -261,12 +261,12 @@ button.primary {
 }
 
 .file-table {
-  min-width: 960px;
+  min-width: 1080px;
 }
 
 .file-row {
   display: grid;
-  grid-template-columns: minmax(230px, 1.4fr) 110px 82px 132px 180px 120px 86px;
+  grid-template-columns: minmax(230px, 1.4fr) 110px 82px 132px 180px 120px 120px 86px;
   gap: 14px;
   align-items: center;
   min-height: 64px;

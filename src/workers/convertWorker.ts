@@ -13,14 +13,14 @@ initializeCanvas(
 );
 
 ctx.onmessage = async (event: MessageEvent<WorkerRequest>) => {
-  const { id, file, options } = event.data;
+  const { id, file, options, mode } = event.data;
 
   try {
     const result = await convertFile(file, options);
     ctx.postMessage({
       type: 'success',
       id,
-      ...result,
+      ...(mode === 'convert' ? result : { ...result, blob: undefined }),
     } satisfies WorkerResponse);
   } catch (error) {
     ctx.postMessage({

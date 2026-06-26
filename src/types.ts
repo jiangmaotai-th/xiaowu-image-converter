@@ -16,6 +16,8 @@ export interface ImageJob {
   outputName?: string;
   outputBlob?: Blob;
   downloaded?: boolean;
+  previewSize?: number;
+  previewQuality?: number;
   qualityUsed?: number;
   warning?: string;
   error?: string;
@@ -32,12 +34,13 @@ export interface WorkerRequest {
   id: string;
   file: File;
   options: ConvertOptions;
+  mode: 'preview' | 'convert';
 }
 
 export interface WorkerSuccess {
   type: 'success';
   id: string;
-  blob: Blob;
+  blob?: Blob;
   outputName: string;
   width: number;
   height: number;

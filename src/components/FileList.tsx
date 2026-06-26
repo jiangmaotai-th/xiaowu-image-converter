@@ -34,6 +34,7 @@ export default function FileList({ jobs, totalCount }: FileListProps) {
           <span>格式</span>
           <span>尺寸</span>
           <span>状态</span>
+          <span>预览大小</span>
           <span>转换后</span>
           <span>保存</span>
         </div>
@@ -48,6 +49,10 @@ export default function FileList({ jobs, totalCount }: FileListProps) {
               {job.status === 'processing' && <ProgressBar value={job.progress} />}
               {job.warning && <small className="warning">{job.warning}</small>}
               {job.error && <small className="error">{job.error}</small>}
+            </span>
+            <span>
+              {formatBytes(job.previewSize)}
+              {job.previewQuality && <small>质量 {job.previewQuality.toFixed(2)}</small>}
             </span>
             <span>
               {formatBytes(job.outputSize)}
