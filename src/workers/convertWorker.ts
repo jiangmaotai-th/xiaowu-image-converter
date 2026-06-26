@@ -74,13 +74,14 @@ async function decodeImage(buffer: ArrayBuffer, format: WorkerRequest['format'])
     return decodeBrowserImage(buffer, 'image/heic');
   }
 
-  return decodeTiff(buffer);
+  return decodeTiffWithFallback(buffer);
 }
 
 interface DecodedImage {
   width: number;
   height: number;
-  imageData: ImageData;
+  imageData?: ImageData;
+  canvas?: OffscreenCanvas;
   warning?: string;
   dispose?: () => void;
 }
@@ -109,6 +110,14 @@ function decodeTiff(buffer: ArrayBuffer): DecodedImage {
   };
 }
 
+async function decodeTiffWithFallback(buffer: ArrayBuffer): Promise<DecodedImage> {
+  try {
+    return await decodeBrowserImage(buffer, 'image/tiff');
+  } catch {
+    return decodeTiff(buffer);
+  }
+}
+
 async function decodeBrowserImage(buffer: ArrayBuffer, type: string): Promise<DecodedImage> {
   let bitmap: ImageBitmap;
 
@@ -125,13 +134,12 @@ async function decodeBrowserImage(buffer: ArrayBuffer, type: string): Promise<De
     throw new Error('当前浏览器不支持 JPG 解码');
   }
 
-  canvasCtx.drawImage(bitmap, 0, 0);
-  const imageData = canvasCtx.getImageData(0, 0, bitmap.width, bitmap.height);
   const width = bitmap.width;
   const height = bitmap.height;
+  canvasCtx.drawImage(bitmap, 0, 0);
   bitmap.close();
 
-  return { width, height, imageData };
+  return { width, height, canvas };
 }
 
 function decodePsd(buffer: ArrayBuffer): DecodedImage {
@@ -173,14 +181,20 @@ async function encodeJpegUnderTarget(image: DecodedImage, options: ConvertOption
   const targetBytes = options.targetSizeMb * 1024 * 1024;
   const canvas = new OffscreenCanvas(image.width, image.height);
   const canvasCtx = canvas.getContext('2d', { willReadFrequently: false });
-  const sourceCanvas = new OffscreenCanvas(image.width, image.height);
-  const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: false });
 
-  if (!canvasCtx || !sourceCtx) {
+  if (!canvasCtx) {
     throw new Error('当前浏览器不支持 Worker 画布转换');
   }
 
-  sourceCtx.putImageData(image.imageData, 0, 0);
+  const sourceCanvas = image.canvas ?? new OffscreenCanvas(image.width, image.height);
+  if (image.imageData) {
+    const sourceCtx = sourceCanvas.getContext('2d', { willReadFrequently: false });
+    if (!sourceCtx) {
+      throw new Error('当前浏览器不支持 Worker 画布转换');
+    }
+    sourceCtx.putImageData(image.imageData, 0, 0);
+  }
+
   canvasCtx.fillStyle = options.backgroundColor;
   canvasCtx.fillRect(0, 0, image.width, image.height);
   canvasCtx.drawImage(sourceCanvas, 0, 0);
