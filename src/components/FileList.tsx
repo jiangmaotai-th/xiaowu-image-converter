@@ -1,65 +1,61 @@
-import type { ImageJob } from '../types';
+import type { AppFile } from '../types/file';
 import { formatBytes } from '../utils/formatBytes';
 import ProgressBar from './ProgressBar';
+import StatusBadge from './StatusBadge';
 
 interface FileListProps {
-  jobs: ImageJob[];
-  totalCount: number;
+  files: AppFile[];
 }
 
-const statusText: Record<ImageJob['status'], string> = {
-  queued: '等待',
-  processing: '转换中',
-  done: '完成',
-  error: '失败',
-};
+const MAX_RENDERED_ROWS = 600;
 
-export default function FileList({ jobs, totalCount }: FileListProps) {
-  if (totalCount === 0) {
-    return <div className="empty-list">还没有文件。把 TIFF、JPG 或 HEIC 拖进来，就可以开始转换。</div>;
+export default function FileList({ files }: FileListProps) {
+  if (files.length === 0) {
+    return <div className="empty-list">拖入图片或文件夹后，文件会显示在这里。</div>;
   }
 
-  const hiddenCount = Math.max(0, totalCount - jobs.length);
+  const visibleFiles = files.length > MAX_RENDERED_ROWS ? files.slice(-MAX_RENDERED_ROWS) : files;
 
   return (
     <section className="file-panel">
       <div className="file-summary">
-        共 {totalCount} 个文件
-        {hiddenCount > 0 ? `，为保持流畅仅显示最近 ${jobs.length} 个` : ''}
+        共 {files.length} 个文件
+        {files.length > visibleFiles.length && `，当前显示最近 ${visibleFiles.length} 个`}
       </div>
       <div className="file-table">
         <div className="file-row file-head">
           <span>文件名</span>
-          <span>原始大小</span>
           <span>格式</span>
-          <span>尺寸</span>
-          <span>状态</span>
+          <span>原始大小</span>
           <span>预览大小</span>
-          <span>转换后</span>
-          <span>保存</span>
+          <span>状态</span>
+          <span>进度</span>
+          <span>提示 / 错误</span>
         </div>
-        {jobs.map((job) => (
-          <div className="file-row" key={job.id}>
-            <span className="file-name" title={job.name}>{job.name}</span>
-            <span>{formatBytes(job.originalSize)}</span>
-            <span>{job.format}</span>
-            <span>{job.width && job.height ? `${job.width} x ${job.height}` : '-'}</span>
+        {visibleFiles.map((file) => (
+          <div className="file-row" key={file.id}>
+            <span className="file-name" title={file.path}>{file.name}</span>
+            <span>{file.format}</span>
+            <span>{formatBytes(file.originalSize)}</span>
             <span>
-              <span className={`status status-${job.status}`}>{statusText[job.status]}</span>
-              {job.status === 'processing' && <ProgressBar value={job.progress} />}
-              {job.warning && <small className="warning">{job.warning}</small>}
-              {job.error && <small className="error">{job.error}</small>}
+              {file.outputSize ? (
+                formatBytes(file.outputSize)
+              ) : file.previewPending ? (
+                '计算中'
+              ) : file.previewSize ? (
+                <span className="preview-value">
+                  {formatBytes(file.previewSize)}
+                  {file.previewWarning && <small title={file.previewWarning}>{file.previewWarning}</small>}
+                </span>
+              ) : file.previewError ? (
+                <span className="preview-error" title={file.previewError}>预览失败</span>
+              ) : (
+                '-'
+              )}
             </span>
-            <span>
-              {job.previewPending && !job.previewSize ? '计算中' : formatBytes(job.previewSize)}
-              {job.previewQuality && <small>质量 {job.previewQuality.toFixed(2)}</small>}
-              {job.previewPending && job.previewSize && <small>更新中</small>}
-            </span>
-            <span>
-              {formatBytes(job.outputSize)}
-              {job.qualityUsed && <small>质量 {job.qualityUsed.toFixed(2)}</small>}
-            </span>
-            <span>{job.downloaded ? '已下载' : '-'}</span>
+            <span><StatusBadge status={file.status} /></span>
+            <span><ProgressBar value={file.progress} /></span>
+            <span className="error-cell" title={file.error || file.previewWarning}>{file.error || file.previewWarning || '-'}</span>
           </div>
         ))}
       </div>

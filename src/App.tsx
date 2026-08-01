@@ -1,450 +1,358 @@
+import { invoke } from '@tauri-apps/api/core';
+import { listen } from '@tauri-apps/api/event';
 import { useEffect, useMemo, useRef, useState } from 'react';
 
 import DropZone from './components/DropZone';
 import FileList from './components/FileList';
+import SettingsPanel from './components/SettingsPanel';
 import Toolbar from './components/Toolbar';
-import type { ConvertOptions, ImageJob, WorkerFailure, WorkerResponse } from './types';
-import { downloadBlob } from './utils/download';
-import { detectSourceFormat, makeId } from './utils/image';
-import { runWithConcurrency } from './utils/queue';
+import type { ConvertBatchRequest, ConvertEvent, ConvertJobRequest, ConvertResult, PreviewRequest, PreviewResult } from './types/convert';
+import type { AppFile, FileInfo, FileStatus } from './types/file';
+import type { ConvertSettings, ToolStatus } from './types/settings';
+import { basename, getFormat, makeFileId } from './utils/file';
 
-const CONCURRENCY = 2;
-const MIN_AUTO_QUALITY = 0.4;
-const VISIBLE_ROWS = 500;
-const DOWNLOAD_DELAY_MS = 650;
+const defaultSettings: ConvertSettings = {
+  outputFormat: 'JPEG',
+  targetSizeMb: 10,
+  jpegQuality: 92,
+  minQuality: 65,
+  mode: 'auto',
+  outputDirectory: '',
+  filenameSuffix: '_converted',
+  concurrency: 2,
+  allowResize: false,
+};
 
-interface DownloadItem {
-  id: string;
-  blob: Blob;
-  outputName: string;
-  outputSize: number;
-  qualityUsed?: number;
-}
+const MAX_PREVIEW_BATCH = 24;
+const MAX_VISIBLE_HISTORY = 600;
 
 export default function App() {
-  const [jobIds, setJobIds] = useState<string[]>([]);
-  const [jobsById, setJobsById] = useState<Record<string, ImageJob>>({});
-  const [quality, setQuality] = useState(1);
-  const [targetSizeMb, setTargetSizeMb] = useState(10);
+  const [files, setFiles] = useState<AppFile[]>([]);
+  const [settings, setSettings] = useState<ConvertSettings>(defaultSettings);
+  const [toolStatus, setToolStatus] = useState<ToolStatus | null>(null);
   const [busy, setBusy] = useState(false);
+  const [installingImageMagick, setInstallingImageMagick] = useState(false);
   const [messages, setMessages] = useState<string[]>([]);
-  const workersRef = useRef<Worker[]>([]);
-  const previewWorkersRef = useRef<Worker[]>([]);
-  const previewTimerRef = useRef<number | undefined>(undefined);
+  const cancelRequestedRef = useRef(false);
   const previewRunRef = useRef(0);
 
-  const jobs = useMemo(() => jobIds.map((id) => jobsById[id]).filter(Boolean), [jobIds, jobsById]);
-  const visibleJobs = useMemo(() => jobs.slice(-VISIBLE_ROWS), [jobs]);
-  const previewFileKey = useMemo(() => jobs.filter((job) => job.file).map((job) => job.id).join('|'), [jobs]);
-  const canConvert = useMemo(() => jobs.some((job) => job.file && (job.status === 'queued' || job.status === 'error')), [jobs]);
-  const convertLabel = busy ? '处理中' : '转换';
-
-  const updateJob = (id: string, patch: Partial<ImageJob>) => {
-    setJobsById((current) => {
-      const job = current[id];
-      if (!job) return current;
-      return { ...current, [id]: { ...job, ...patch } };
-    });
-  };
-
-  const getOptionsKey = (options: ConvertOptions) =>
-    `${options.quality}|${options.targetSizeMb}|${options.minAutoQuality}|${options.backgroundColor}`;
-
-  const getPreviewTargetKey = (options: ConvertOptions) =>
-    `${options.targetSizeMb}|${options.minAutoQuality}|${options.backgroundColor}`;
-
-  const updatePreviewResult = (data: Extract<WorkerResponse, { type: 'success' }>, options: ConvertOptions) => {
-    const optionKey = getOptionsKey(options);
-    const targetKey = getPreviewTargetKey(options);
-
-    setJobsById((current) => {
-      const job = current[data.id];
-      if (!job) return current;
-
-      const canReuseSmallerHigherQuality =
-        job.previewTargetKey === targetKey &&
-        job.previewRequestedQuality != null &&
-        options.quality <= job.previewRequestedQuality &&
-        job.previewSize != null &&
-        job.previewBlob &&
-        data.outputSize > job.previewSize;
-
-      if (canReuseSmallerHigherQuality) {
-        return {
-          ...current,
-          [data.id]: {
-            ...job,
-            status: 'queued',
-            progress: 100,
-            width: data.width,
-            height: data.height,
-            previewPending: false,
-            warning: data.warning,
-          },
-        };
-      }
-
-      return {
-        ...current,
-        [data.id]: {
-          ...job,
-          status: 'queued',
-          progress: 100,
-          width: data.width,
-          height: data.height,
-          outputName: data.outputName,
-          previewSize: data.outputSize,
-          previewQuality: data.qualityUsed,
-          previewBlob: data.blob,
-          previewKey: optionKey,
-          previewTargetKey: targetKey,
-          previewRequestedQuality: options.quality,
-          previewPending: false,
-          warning: data.warning,
-        },
-      };
-    });
-  };
-
-  const addFiles = async (files: File[]) => {
-    const accepted: ImageJob[] = [];
-    const rejected: string[] = [];
-
-    for (const file of files) {
-      const format = await detectSourceFormat(file);
-      if (!format) {
-        rejected.push(`${file.name} 不是支持的 TIFF / JPG / HEIC 文件`);
-        continue;
-      }
-
-      accepted.push({
-        id: makeId(file),
-        file,
-        name: file.name,
-        originalSize: file.size,
-        format,
-        status: 'queued',
-        progress: 0,
-      });
-    }
-
-    if (accepted.length > 0) {
-      setJobIds((current) => [...current, ...accepted.map((job) => job.id)]);
-      setJobsById((current) => {
-        const next = { ...current };
-        for (const job of accepted) {
-          next[job.id] = job;
-        }
-        return next;
-      });
-    }
-    setMessages([
-      ...(accepted.length > 0 ? [`已加入 ${accepted.length} 个文件。`] : []),
-      ...rejected,
-      ...(accepted.length > 100
-        ? ['建议一次转换 20-100 张；更大批量也会排队逐个处理，避免一次性解码进内存。']
-        : []),
-    ]);
-  };
-
-  const stopPreviewWorkers = () => {
-    if (previewTimerRef.current) {
-      window.clearTimeout(previewTimerRef.current);
-      previewTimerRef.current = undefined;
-    }
-    for (const worker of previewWorkersRef.current) {
-      worker.terminate();
-    }
-    previewWorkersRef.current = [];
-  };
-
-  const runOne = (
-    job: ImageJob,
-    options: ConvertOptions,
-    mode: 'preview' | 'convert',
-    workerStore = workersRef,
-    previewRunId?: number,
-  ) =>
-    new Promise<WorkerResponse>((resolve) => {
-      if (!job.file) {
-        const data: WorkerFailure = {
-          type: 'error',
-          id: job.id,
-          error: '文件已释放，请重新上传后再转换',
-        };
-        updateJob(job.id, { status: 'error', progress: 0, error: data.error });
-        resolve(data);
-        return;
-      }
-
-      updateJob(job.id, {
-        status: mode === 'preview' ? job.status : 'processing',
-        progress: mode === 'preview' ? job.progress : 18,
-        error: undefined,
-        warning: undefined,
-        outputBlob: undefined,
-        outputSize: undefined,
-        outputName: undefined,
-        downloaded: false,
-        ...(mode === 'preview'
-          ? { previewPending: true }
-          : {}),
-      });
-
-      const worker = new Worker(new URL('./workers/convertWorker.ts', import.meta.url), {
-        type: 'module',
-      });
-      workerStore.current.push(worker);
-
-      const cleanup = () => {
-        worker.terminate();
-        workerStore.current = workerStore.current.filter((item) => item !== worker);
-      };
-
-      worker.onmessage = (event: MessageEvent<WorkerResponse>) => {
-        const data = event.data;
-        if (mode === 'preview' && previewRunId !== previewRunRef.current) {
-          cleanup();
-          resolve(data);
-          return;
-        }
-
-        if (data.type === 'success') {
-          if (mode === 'preview') {
-            updatePreviewResult(data, options);
-          } else {
-            updateJob(data.id, {
-              status: 'done',
-              progress: 100,
-              width: data.width,
-              height: data.height,
-              outputBlob: data.blob,
-              outputName: data.outputName,
-              outputSize: data.outputSize,
-              qualityUsed: data.qualityUsed,
-              warning: data.warning,
-            });
-          }
-        } else {
-          updateJob(data.id, {
-            status: 'error',
-            progress: 0,
-            previewPending: false,
-            error: data.error,
-          });
-        }
-        cleanup();
-        resolve(data);
-      };
-
-      worker.onerror = (event) => {
-        const data: WorkerResponse = {
-          type: 'error',
-          id: job.id,
-          error: event.message || 'Worker 转换出错',
-        };
-        updateJob(job.id, {
-          status: 'error',
-          progress: 0,
-          previewPending: false,
-          error: data.error,
-        });
-        cleanup();
-        resolve(data);
-      };
-
-      worker.postMessage({
-        id: job.id,
-        file: job.file,
-        format: job.format,
-        options,
-        mode,
-      });
-    });
-
-  const makeOptions = (): ConvertOptions => ({
-    quality,
-    targetSizeMb,
-    minAutoQuality: MIN_AUTO_QUALITY,
-    backgroundColor: '#ffffff',
-  });
-
-  const wait = (ms: number) => new Promise((resolve) => window.setTimeout(resolve, ms));
+  const queuedCount = useMemo(() => files.filter((file) => file.status === 'queued' || file.status === 'failed').length, [files]);
+  const canStart = queuedCount > 0 && Boolean(settings.outputDirectory);
 
   useEffect(() => {
-    if (busy || !previewFileKey) return undefined;
+    void refreshToolStatus();
+
+    const unlistenProgress = listen<ConvertEvent>('convert-progress', (event) => {
+      applyConvertEvent(event.payload);
+    });
+
+    const unlistenDrop = listen<{ paths: string[] }>('tauri://drag-drop', (event) => {
+      void addPaths(event.payload.paths);
+    });
+
+    return () => {
+      void unlistenProgress.then((dispose) => dispose());
+      void unlistenDrop.then((dispose) => dispose());
+    };
+  }, []);
+
+  useEffect(() => {
+    const previewableFiles = files
+      .filter((file) => file.status === 'queued' || file.status === 'failed')
+      .slice(-MAX_PREVIEW_BATCH);
+    if (previewableFiles.length === 0) return;
 
     const runId = previewRunRef.current + 1;
     previewRunRef.current = runId;
-    stopPreviewWorkers();
-    const options = makeOptions();
-    const optionKey = getOptionsKey(options);
-    const targetKey = getPreviewTargetKey(options);
-    setJobsById((current) => {
-      const next = { ...current };
-      for (const id of jobIds) {
-        const job = next[id];
-        if (!job?.file) continue;
-        const canKeepCurrentPreview =
-          job.previewTargetKey === targetKey &&
-          job.previewRequestedQuality != null &&
-          quality <= job.previewRequestedQuality &&
-          job.previewSize != null &&
-          job.previewBlob;
 
-        next[id] = {
-          ...job,
-          previewSize: canKeepCurrentPreview ? job.previewSize : undefined,
-          previewQuality: canKeepCurrentPreview ? job.previewQuality : undefined,
-          previewBlob: canKeepCurrentPreview ? job.previewBlob : undefined,
-          previewKey: canKeepCurrentPreview ? job.previewKey : optionKey,
-          previewTargetKey: canKeepCurrentPreview ? job.previewTargetKey : targetKey,
-          previewRequestedQuality: canKeepCurrentPreview ? job.previewRequestedQuality : quality,
-          previewPending: true,
-          warning: undefined,
-          error: undefined,
-        };
-      }
-      return next;
-    });
-
-    previewTimerRef.current = window.setTimeout(async () => {
-      const targets = jobIds
-        .map((id) => jobsById[id])
-        .filter((job): job is ImageJob => Boolean(job?.file));
-
-      await runWithConcurrency(targets, CONCURRENCY, async (job) => {
-        if (runId !== previewRunRef.current) return;
-        await runOne(job, options, 'preview', previewWorkersRef, runId);
-      });
-    }, 650);
-
-    return () => {
-      if (previewTimerRef.current) {
-        window.clearTimeout(previewTimerRef.current);
-        previewTimerRef.current = undefined;
-      }
-    };
-  }, [busy, previewFileKey, quality, targetSizeMb]);
-
-  const convertAll = async () => {
-    const targets = jobs.filter((job) => job.file && (job.status === 'queued' || job.status === 'error'));
-    if (targets.length === 0) return;
-
-    previewRunRef.current += 1;
-    stopPreviewWorkers();
-    setBusy(true);
-    setMessages([]);
-    const downloads: DownloadItem[] = [];
-
-    const options = makeOptions();
-    const optionKey = getOptionsKey(options);
-    const targetKey = getPreviewTargetKey(options);
-
-    await runWithConcurrency(targets, CONCURRENCY, async (job) => {
-      const canUsePreview =
-        job.previewBlob &&
-        job.outputName &&
-        (job.previewKey === optionKey ||
-          (job.previewTargetKey === targetKey &&
-            job.previewRequestedQuality != null &&
-            options.quality <= job.previewRequestedQuality));
-
-      if (canUsePreview && job.previewBlob && job.outputName) {
-        downloads.push({
-          id: job.id,
-          blob: job.previewBlob,
-          outputName: job.outputName,
-          outputSize: job.previewBlob.size,
-          qualityUsed: job.previewQuality,
-        });
-        return;
-      }
-
-      const result = await runOne(job, options, 'convert');
-      if (result.type === 'success' && result.blob) {
-        downloads.push({
-          id: result.id,
-          blob: result.blob,
-          outputName: result.outputName,
-          outputSize: result.blob.size,
-          qualityUsed: result.qualityUsed,
-        });
-      }
-    });
-
-    for (const item of downloads) {
-      downloadBlob(item.blob, item.outputName);
-      updateJob(item.id, {
-        status: 'done',
-        progress: 100,
-        file: undefined,
-        outputBlob: undefined,
-        outputName: item.outputName,
-        outputSize: item.outputSize,
-        qualityUsed: item.qualityUsed,
-        previewBlob: undefined,
-        downloaded: true,
-      });
-
-      if (downloads.length > 1) {
-        await wait(DOWNLOAD_DELAY_MS);
-      }
-    }
-
-    setMessages(
-      downloads.length > 0
-        ? [`转换完成，已直接下载 ${downloads.length} 个 JPEG 文件。`]
-        : ['没有成功转换的文件，请查看列表中的错误提示。'],
+    setFiles((current) =>
+      current.map((file) =>
+        file.status === 'queued' || file.status === 'failed'
+          ? { ...file, previewPending: true, previewError: undefined }
+          : file,
+      ),
     );
-    setBusy(false);
+
+    const timer = window.setTimeout(() => {
+      void refreshPreviewSizes(runId, previewableFiles);
+    }, 350);
+
+    return () => window.clearTimeout(timer);
+  }, [files.map((file) => `${file.id}:${file.status}`).join('|'), settings.jpegQuality, settings.targetSizeMb, settings.allowResize]);
+
+  const refreshToolStatus = async () => {
+    try {
+      const status = await invoke<ToolStatus>('detect_tools');
+      setToolStatus(status);
+      setMessages((current) => {
+        const next = [...current];
+        if (!status.imagemagickAvailable) {
+          next.push('未检测到 ImageMagick。PSD/TIFF 快速转换需要安装 ImageMagick：brew install imagemagick');
+        }
+        if (!status.photoshopAvailable) {
+          next.push('未检测到 Photoshop。PSD 高保真模式将不可用。');
+        }
+        return Array.from(new Set(next)).slice(-4);
+      });
+    } catch (error) {
+      setMessages([`检测工具失败：${String(error)}`]);
+    }
   };
 
-  const clearAll = () => {
-    for (const worker of workersRef.current) {
-      worker.terminate();
+  const applyConvertEvent = (event: ConvertEvent) => {
+    setFiles((current) =>
+      current.map((file) =>
+        file.id === event.id
+          ? {
+              ...file,
+              status: event.status as FileStatus,
+              progress: event.progress,
+              outputPath: event.outputPath ?? file.outputPath,
+              outputSize: event.outputSize ?? file.outputSize,
+              previewPending: event.status === 'success' ? false : file.previewPending,
+              error: event.error,
+            }
+          : file,
+      ),
+    );
+  };
+
+  const refreshPreviewSizes = async (runId: number, previewableFiles: AppFile[]) => {
+    const requests: PreviewRequest[] = previewableFiles.map((file) => ({
+      id: file.id,
+      inputPath: file.path,
+      settings,
+    }));
+
+    try {
+      const results = await invoke<PreviewResult[]>('preview_sizes', { requests });
+      if (previewRunRef.current !== runId) return;
+
+      setFiles((current) =>
+        current.map((file) => {
+          const result = results.find((item) => item.id === file.id);
+          if (!result) return file;
+          return {
+            ...file,
+            previewSize: result.previewSize,
+            previewPending: false,
+            previewError: result.success ? undefined : result.error,
+            previewWarning: result.warning,
+          };
+        }),
+      );
+    } catch (error) {
+      if (previewRunRef.current !== runId) return;
+      setFiles((current) =>
+        current.map((file) =>
+          previewableFiles.some((previewFile) => previewFile.id === file.id)
+            ? { ...file, previewPending: false, previewError: String(error) }
+            : file,
+        ),
+      );
     }
-    stopPreviewWorkers();
-    workersRef.current = [];
-    setJobIds([]);
-    setJobsById({});
+  };
+
+  const addPaths = async (paths: string[]) => {
+    if (paths.length === 0) return;
+
+    try {
+      const infos = await invoke<FileInfo[]>('collect_input_paths', { paths });
+      const accepted: AppFile[] = [];
+      const rejected: string[] = [];
+
+      for (const info of infos) {
+        const format = getFormat(info.path);
+        if (!info.is_file || !format) {
+          rejected.push(`${info.name} 不是支持的图片格式`);
+          continue;
+        }
+
+        accepted.push({
+          id: makeFileId(info.path),
+          path: info.path,
+          name: info.name || basename(info.path),
+          format,
+          originalSize: info.size,
+          status: 'queued',
+          progress: 0,
+        });
+      }
+
+      setFiles((current) => {
+        const existing = new Set(current.map((file) => file.path));
+        return [...current, ...accepted.filter((file) => !existing.has(file.path))];
+      });
+
+      setMessages([
+        ...(accepted.length > 0 ? [`已加入 ${accepted.length} 个文件。`] : []),
+        ...rejected.slice(0, 5),
+      ]);
+    } catch (error) {
+      setMessages([`读取文件失败：${String(error)}`]);
+    }
+  };
+
+  const startConvert = async () => {
+    if (!canStart || busy) return;
+    cancelRequestedRef.current = false;
+    setBusy(true);
     setMessages([]);
+
+    setFiles((current) =>
+      current.map((file) =>
+        file.status === 'failed' || file.status === 'queued'
+          ? { ...file, status: 'queued', progress: 0, error: undefined, outputPath: undefined, outputSize: undefined }
+          : file,
+      ),
+    );
+
+    const jobs: ConvertJobRequest[] = files
+      .filter((file) => file.status === 'queued' || file.status === 'failed')
+      .map((file) => ({
+        id: file.id,
+        inputPath: file.path,
+        outputDirectory: settings.outputDirectory,
+        suffix: settings.filenameSuffix,
+        settings,
+      }));
+
+    try {
+      const request: ConvertBatchRequest = { jobs, settings };
+      const results = await invoke<ConvertResult[]>('convert_batch', { request });
+      const failed = results.filter((result) => !result.success).length;
+      const success = results.length - failed;
+      setFiles((current) => compactCompletedFiles(current));
+      setMessages([`转换完成：成功 ${success} 个，失败 ${failed} 个。`]);
+    } catch (error) {
+      setMessages([`转换中断：${String(error)}`]);
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const cancelConvert = async () => {
+    cancelRequestedRef.current = true;
+    await invoke('cancel_conversion');
+    setFiles((current) =>
+      current.map((file) =>
+        file.status === 'queued' || file.status === 'converting' || file.status === 'compressing'
+          ? { ...file, status: 'cancelled', progress: file.progress }
+          : file,
+      ),
+    );
     setBusy(false);
+    setMessages(['已请求取消转换。']);
+  };
+
+  const clearFiles = () => {
+    if (busy) return;
+    setFiles([]);
+    setMessages([]);
+  };
+
+  const installImageMagick = async () => {
+    if (installingImageMagick || busy) return;
+    setInstallingImageMagick(true);
+    setMessages(['正在安装 ImageMagick，可能需要几分钟。']);
+
+    try {
+      const message = await invoke<string>('install_imagemagick');
+      setMessages([message]);
+      await refreshToolStatus();
+    } catch (error) {
+      setMessages([`安装 ImageMagick 失败：${String(error)}`]);
+    } finally {
+      setInstallingImageMagick(false);
+    }
+  };
+
+  const openOutputDirectory = async () => {
+    if (!settings.outputDirectory) return;
+    await invoke('open_output_folder', { path: settings.outputDirectory });
   };
 
   return (
     <main className="app-shell">
-      <header className="hero">
+      <header className="app-header">
         <div>
-          <p className="eyebrow">本地批量 TIFF / JPG / HEIC 转 JPEG</p>
-          <h1>小午的图片转换</h1>
+          <p className="eyebrow">开发者：猫汰  版本 v1.0</p>
+          <h1 className="app-title">
+            <span>小午的图片转换</span>
+            <img className="pro-badge" src="/pro-badge.png" alt="Pro" />
+          </h1>
         </div>
-        <div className="privacy-pill">开发者：猫汰&nbsp;&nbsp;版本 v1.0</div>
+        <div className="mode-card">
+          <strong>当前转换模式</strong>
+          <span>{modeLabel(settings.mode)}</span>
+        </div>
       </header>
 
-      <DropZone disabled={busy} onFiles={addFiles} />
+      <section className="workspace">
+        <div className="main-panel">
+          <section className="cat-banner" aria-label="小午的图片转换 Pro">
+            <img src="/cat-banner.png" alt="" />
+          </section>
+          <DropZone disabled={busy} onPaths={addPaths} />
+          {messages.length > 0 && (
+            <div className="message-panel">
+              {messages.map((message) => <p key={message}>{message}</p>)}
+            </div>
+          )}
+          <FileList files={files} />
+        </div>
+
+        <SettingsPanel
+          settings={settings}
+          status={toolStatus}
+          disabled={busy || installingImageMagick}
+          installingImageMagick={installingImageMagick}
+          onInstallImageMagick={installImageMagick}
+          onChange={setSettings}
+        />
+      </section>
 
       <Toolbar
-        quality={quality}
-        targetSizeMb={targetSizeMb}
-        disabled={busy}
-        canConvert={canConvert}
-        convertLabel={convertLabel}
-        onQualityChange={setQuality}
-        onTargetSizeChange={setTargetSizeMb}
-        onConvert={convertAll}
-        onClear={clearAll}
+        busy={busy}
+        canStart={canStart}
+        canOpenOutput={Boolean(settings.outputDirectory)}
+        onStart={startConvert}
+        onCancel={cancelConvert}
+        onClear={clearFiles}
+        onOpenOutput={openOutputDirectory}
       />
-
-      {messages.length > 0 && (
-        <section className="message-panel">
-          {messages.map((message) => (
-            <p key={message}>{message}</p>
-          ))}
-        </section>
-      )}
-
-      <FileList jobs={visibleJobs} totalCount={jobIds.length} />
     </main>
   );
+}
+
+function modeLabel(mode: ConvertSettings['mode']) {
+  if (mode === 'photoshop') return 'Photoshop 高保真';
+  if (mode === 'imagemagick') return 'ImageMagick 快速转换';
+  return '自动：Photoshop 优先';
+}
+
+function compactCompletedFiles(files: AppFile[]) {
+  const compacted = files.map((file) =>
+    file.status === 'success'
+      ? {
+          ...file,
+          previewPending: false,
+          previewError: undefined,
+          previewWarning: undefined,
+          previewSize: undefined,
+          error: undefined,
+        }
+      : file,
+  );
+
+  if (compacted.length <= MAX_VISIBLE_HISTORY) {
+    return compacted;
+  }
+
+  const keep = compacted.filter((file) => file.status !== 'success');
+  const successTail = compacted
+    .filter((file) => file.status === 'success')
+    .slice(-(MAX_VISIBLE_HISTORY - keep.length));
+
+  return [...keep, ...successTail];
 }

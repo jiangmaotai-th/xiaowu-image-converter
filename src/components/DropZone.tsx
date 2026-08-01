@@ -1,67 +1,53 @@
-import { useRef, useState } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
 
 interface DropZoneProps {
   disabled?: boolean;
-  onFiles: (files: File[]) => void;
+  onPaths: (paths: string[]) => void;
 }
 
-export default function DropZone({ disabled, onFiles }: DropZoneProps) {
-  const inputRef = useRef<HTMLInputElement>(null);
-  const [dragging, setDragging] = useState(false);
-
-  const acceptFiles = (fileList: FileList | null) => {
-    if (!fileList || disabled) return;
-    const files = Array.from(fileList);
-    if (files.length === 0) return;
-
-    onFiles(files);
-    if (inputRef.current) {
-      inputRef.current.value = '';
-    }
+export default function DropZone({ disabled, onPaths }: DropZoneProps) {
+  const chooseFiles = async () => {
+    if (disabled) return;
+    const selected = await open({
+      multiple: true,
+      directory: false,
+      filters: [
+        {
+          name: 'Images',
+          extensions: ['psd', 'psb', 'tif', 'tiff', 'png', 'jpg', 'jpeg', 'heic', 'webp', 'bmp'],
+        },
+      ],
+    });
+    if (!selected) return;
+    onPaths(Array.isArray(selected) ? selected : [selected]);
   };
 
-  const openFilePicker = () => {
-    if (!inputRef.current || disabled) return;
-    inputRef.current.value = '';
-    inputRef.current.click();
+  const chooseFolder = async () => {
+    if (disabled) return;
+    const selected = await open({
+      multiple: true,
+      directory: true,
+    });
+    if (!selected) return;
+    onPaths(Array.isArray(selected) ? selected : [selected]);
   };
 
   return (
-    <section
-      className={`drop-zone ${dragging ? 'is-dragging' : ''}`}
-      onDragEnter={(event) => {
-        event.preventDefault();
-        setDragging(true);
-      }}
-      onDragOver={(event) => event.preventDefault()}
-      onDragLeave={(event) => {
-        event.preventDefault();
-        setDragging(false);
-      }}
-      onDrop={(event) => {
-        event.preventDefault();
-        setDragging(false);
-        acceptFiles(event.dataTransfer.files);
-      }}
-    >
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".tif,.tiff,.jpg,.jpeg,.heic,.heif"
-        multiple
-        disabled={disabled}
-        onClick={(event) => {
-          event.currentTarget.value = '';
-        }}
-        onChange={(event) => acceptFiles(event.target.files)}
-      />
+    <section className="drop-zone">
       <div>
-        <h2>拖拽 TIFF、JPG 和 HEIC 到这里</h2>
-        <p>一次至少支持 20 张，默认导出 JPEG</p>
+        <h2>拖拽 PSD、TIFF、PNG、JPG、HEIC、WebP 到这里</h2>
+        <p>也可以拖入文件夹，所有转换都在本机完成</p>
       </div>
-      <button type="button" disabled={disabled} onClick={openFilePicker}>
-        选择图片
-      </button>
+      <div className="drop-actions">
+        <button className="icon-button file-button" type="button" disabled={disabled} onClick={chooseFiles}>
+          <span className="button-icon file-icon" aria-hidden="true" />
+          选择文件
+        </button>
+        <button className="icon-button folder-button" type="button" disabled={disabled} onClick={chooseFolder}>
+          <span className="button-icon folder-icon" aria-hidden="true" />
+          选择文件夹
+        </button>
+      </div>
     </section>
   );
 }

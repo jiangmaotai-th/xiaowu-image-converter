@@ -1,48 +1,148 @@
-# 小午的图片转换
+# 小午的图片转换 Pro
 
-网页端本地图片转换工具，支持批量将 TIFF / JPG / HEIC 转为 JPEG，并尽量压缩到目标大小以下。所有转换都在浏览器本地完成，不需要后端。
+小午的图片转换 Pro 是一个 macOS 桌面版批量图片转换工具。它使用 Tauri 2、React、TypeScript 和 Rust 开发，所有文件都在用户本机处理，不上传服务器，不需要登录，也没有收费系统。
 
-## 功能
+第一版输出格式固定为 JPEG，支持把 PSD / PSB / TIFF / PNG / JPG / HEIC / WebP / BMP 批量转换为 JPEG，并尽量压缩到指定大小以下，默认 10MB。
 
-- 拖拽上传或批量选择 `.tif` / `.tiff` / `.jpg` / `.jpeg` / `.heic` / `.heif`
-- JPG 可重新输出为 JPEG，用于降低质量和压缩到目标大小
-- HEIC 会优先使用浏览器本地解码能力；如果浏览器不支持，会提示先导出为 JPG
-- TIFF 默认读取第一页
-- JPEG 质量可调，默认 `1.00`
-- 自动压缩到目标大小以下，默认 `10MB`
-- 超过目标大小时逐步降低质量，最低自动降到 `0.65`
-- 转换完成后直接下载 JPEG，也保留单张下载按钮用于重新保存
-- Web Worker 转换，批量并发限制为 2
-- 大尺寸图片性能提醒
-- 转换完成后会直接保存 JPEG 到浏览器下载目录
-- 上传文件或调整 JPEG 质量、目标大小后，列表会自动刷新预览大小
-- 转换完成后会释放文件和 Blob 引用，避免批量转换后内存持续上涨
-- 文件列表仅渲染最近 500 条记录，减少超大批量时的页面卡顿
+## 安装依赖
 
-## 开发
+需要先安装：
+
+- Node.js
+- Rust
+- Xcode Command Line Tools
+- 可选：Adobe Photoshop
+- 可选：ImageMagick
+
+安装前端依赖：
 
 ```bash
 npm install
+```
+
+安装 ImageMagick：
+
+```bash
+brew install imagemagick
+```
+
+## 开发运行
+
+```bash
+npm run tauri:dev
+```
+
+普通网页调试也可以运行：
+
+```bash
 npm run dev
 ```
 
-打开终端输出的本地地址即可使用。
-
-## 构建
+## 打包 .app
 
 ```bash
-npm run build
+npm run tauri:build
 ```
 
-## 部署到 GitHub Pages
+打包完成后，`.app` 会出现在：
 
-项目内已包含 GitHub Actions 工作流。推送到 `main` 分支后，GitHub 会自动执行构建并发布到 GitHub Pages。
+```text
+src-tauri/target/release/bundle/macos/
+```
 
-仓库首次发布时，在 GitHub 仓库的 `Settings -> Pages` 中选择 `GitHub Actions` 作为部署来源。
+## 打包 .dmg
 
-## 说明
+同样使用：
 
-- JPEG 是有损压缩格式，不是真正无损。
-- 所有转换都在本地浏览器完成，不上传服务器。
-- TIFF 多页文件当前只转换第一页，后续可扩展为多页选择。
-- 超大 TIFF 解码可能占用较多内存，建议一次处理适量文件。
+```bash
+npm run tauri:build
+```
+
+`.dmg` 会出现在：
+
+```text
+src-tauri/target/release/bundle/dmg/
+```
+
+## Photoshop 模式说明
+
+PSD / PSB 在“自动”模式下会优先尝试 Photoshop 高保真转换。程序会通过 `osascript` 调用 Photoshop，打开 PSD，按 Photoshop 当前可见合成效果导出 JPEG，透明区域填充白色，转换完成后关闭文档并且不保存原文件。
+
+这个模式更适合复杂 PSD：
+
+- 复杂图层
+- 调整图层
+- 智能对象
+- ICC 色彩配置
+- 8bit / 16bit PSD
+
+## ImageMagick 模式说明
+
+如果没有 Photoshop，或用户选择 ImageMagick 快速转换，会调用本机 `magick` 命令转换。
+
+参考命令逻辑：
+
+```bash
+magick input.psd[0] -auto-orient -colorspace sRGB -background white -alpha remove -alpha off -flatten -quality 92 output.jpeg
+```
+
+ImageMagick 也负责 TIFF / PNG / JPG / HEIC / WebP / BMP 的转换，以及转换后的二次压缩和缩放。
+
+## 如何安装 ImageMagick
+
+推荐使用 Homebrew：
+
+```bash
+brew install imagemagick
+```
+
+安装后重启 App。如果仍然检测不到，请确认以下路径之一存在：
+
+```text
+/opt/homebrew/bin/magick
+/usr/local/bin/magick
+```
+
+## 为什么网页版 PSD 转换不稳定
+
+PSD 不是普通图片格式，它包含图层、调整图层、智能对象、蒙版、混合模式、ICC 色彩配置等复杂信息。浏览器端 JavaScript 库通常只能读取一部分 PSD 数据，遇到复杂文件时容易出现偏色、灰图、图层合成错误或导出损坏。
+
+桌面版改为优先使用 Photoshop 渲染 PSD；没有 Photoshop 时再用 ImageMagick 兜底，因此稳定性比网页版方案更高。
+
+## JPEG 是有损格式
+
+JPEG 是有损压缩格式，不是真正无损。质量越低，文件越小，但画质可能下降。默认质量为 92，自动压缩最低降到 65。
+
+## 常见问题
+
+### PSD 转换失败怎么办？
+
+优先安装 Photoshop。没有 Photoshop 时请安装 ImageMagick：
+
+```bash
+brew install imagemagick
+```
+
+### TIFF 转换失败怎么办？
+
+TIFF 第一版通过 ImageMagick 转换，只导出第一页。请确认已安装 ImageMagick。
+
+### HEIC 转换失败怎么办？
+
+HEIC 依赖 ImageMagick 的 HEIC 支持和 macOS 可用解码能力。如果失败，可以先在“照片”或“预览”中导出为 JPG。
+
+### 文件超过目标大小怎么办？
+
+程序会先降低 JPEG 质量，最低降到 65。如果仍超过目标大小，可以勾选“允许缩小尺寸以压到目标大小”。
+
+### 输出文件会覆盖原文件吗？
+
+不会。默认会追加 `_converted` 后缀并输出到用户选择的文件夹。
+
+## 后续计划
+
+- 内置 ImageMagick，减少外部安装步骤
+- 支持 PNG / WebP 输出
+- 支持 TIFF 多页导出
+- 支持保存转换预设
+- 支持更详细的日志查看窗口

@@ -1,41 +1,32 @@
-import QualitySlider from './QualitySlider';
-import TargetSizeInput from './TargetSizeInput';
-
 interface ToolbarProps {
-  quality: number;
-  targetSizeMb: number;
-  disabled?: boolean;
-  canConvert: boolean;
-  convertLabel: string;
-  onQualityChange: (value: number) => void;
-  onTargetSizeChange: (value: number) => void;
-  onConvert: () => void;
+  busy: boolean;
+  canStart: boolean;
+  canOpenOutput: boolean;
+  onStart: () => void;
+  onCancel: () => void;
   onClear: () => void;
+  onOpenOutput: () => void;
 }
 
-export default function Toolbar({
-  quality,
-  targetSizeMb,
-  disabled,
-  canConvert,
-  convertLabel,
-  onQualityChange,
-  onTargetSizeChange,
-  onConvert,
-  onClear,
-}: ToolbarProps) {
+export default function Toolbar({ busy, canStart, canOpenOutput, onStart, onCancel, onClear, onOpenOutput }: ToolbarProps) {
   return (
-    <section className="toolbar">
-      <QualitySlider value={quality} disabled={disabled} onChange={onQualityChange} />
-      <TargetSizeInput value={targetSizeMb} disabled={disabled} onChange={onTargetSizeChange} />
-      <div className="toolbar-actions">
-        <button type="button" className="primary" disabled={disabled || !canConvert} onClick={onConvert}>
-          {convertLabel}
-        </button>
-        <button type="button" disabled={disabled} onClick={onClear}>
-          清空
-        </button>
-      </div>
-    </section>
+    <footer className="bottom-toolbar">
+      <button className="primary" type="button" disabled={!canStart || busy} onClick={onStart}>
+        <span className="button-icon play-icon" aria-hidden="true" />
+        开始转换
+      </button>
+      <button type="button" disabled={!busy} onClick={onCancel}>
+        <span className="button-icon cancel-icon" aria-hidden="true" />
+        取消
+      </button>
+      <button type="button" disabled={busy} onClick={onClear}>
+        <span className="button-icon trash-icon" aria-hidden="true" />
+        清空列表
+      </button>
+      <button type="button" disabled={!canOpenOutput} onClick={onOpenOutput}>
+        <span className="button-icon folder-icon" aria-hidden="true" />
+        打开输出文件夹
+      </button>
+    </footer>
   );
 }
