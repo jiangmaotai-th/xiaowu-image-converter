@@ -1,5 +1,33 @@
 # 小午的图片转换 Pro
 
+## 网页版：TIFF / HEIC 转 JPG
+
+公开地址：[小午的图片转换网页版](https://jiangmaotai-th.github.io/xiaowu-image-converter/)。网页和桌面版分别构建，浏览器页面不调用 Tauri API。所有解码、编码和下载都在本机完成。
+
+网页版只接受 TIFF / TIF / HEIC / HEIF，支持批量选择、文件夹选择、拖拽文件、质量调节、目标大小和逐张 JPG 下载。默认质量 92，目标严格小于 10,000,000 字节。超过目标时自动降低质量，再逐步缩小尺寸。TIFF 只处理第一页，透明区域填白。
+
+预览不是估算：每张图片会先在 Web Worker 中实际编码并校验 JPEG，然后将该 JPEG 暂存于浏览器 IndexedDB；列表显示其真实字节数，转换时读取同一文件并下载。预览缓存最多 512 MB，之后的图片会在转换时逐张生成并显示实际大小。下载后立即删除该图片的预览缓存，Worker 每张图片结束后销毁。浏览器存储空间不足时仍可逐张转换。文件数量没有人为设置上限，但极大图片会受设备内存和浏览器画布限制；超过 1.2 亿像素时会明确报错。
+
+Chrome 可选择输出文件夹，网页会确认写入完成后显示已保存，并自动避开同名文件。Safari 等不支持目录写入的浏览器会逐张触发 JPG 下载；浏览器可能要求允许连续下载，网页会显示“已发起下载”，无法替浏览器确认用户是否最终保存。
+
+开发网页版：
+
+```bash
+npm install
+npm run dev:web
+```
+
+构建与本地验证：
+
+```bash
+npm run build:web
+npm run test:web
+```
+
+`npm run test:web` 默认连接 `http://localhost:5180/`，请先运行 `npm run dev:web -- --port 5180`。测试包含实际 TIFF、HEIC 的预览与下载字节对比、质量/目标大小变化、损坏文件和 20 张批量列表；设置 `WEB_STRESS=1` 可额外测试大 TIFF 压缩。GitHub Pages 工作流发布 `dist-web/`，桌面版仍使用 `npm run tauri:dev` 和 `npm run tauri:build`。
+
+浏览器端 HEIC 解码使用 [heic-to](https://github.com/hoppergee/heic-to)（LGPL-3.0），TIFF 解码使用 [UTIF.js](https://github.com/photopea/UTIF.js)（MIT）。部分特殊 TIFF 色彩配置可能无法与专业桌面软件完全一致，重要作品请检查最终图片。
+
 小午的图片转换 Pro 是一个 macOS 桌面版批量图片转换工具。它使用 Tauri 2、React、TypeScript 和 Rust 开发，所有文件都在用户本机处理，不上传服务器，不需要登录，也没有收费系统。
 
 第一版输出格式固定为 JPEG，支持把 PSD / PSB / TIFF / PNG / JPG / HEIC / WebP / BMP 批量转换为 JPEG，并尽量压缩到指定大小以下，默认 10MB。
